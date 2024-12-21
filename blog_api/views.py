@@ -12,9 +12,9 @@ from .serializers import (
     PostSerializer,
     CommentSerializer,
 )
-from django.views.decorators.csrf import csrf_exempt
 from django.middleware.csrf import get_token
 from rest_framework.pagination import PageNumberPagination
+from django.core.cache import cache
 
 class SignupView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -75,11 +75,15 @@ class PostListCreateView(APIView):
     def get(self, request):
         # Filter based on the author's username (optional)
         author = request.GET.get('author', None)
+        cache_key = f'post_list_{author or "all"}'
+        if cached_data := cache.get(cache_key):
+            print("data from cached")
+            return Response(cached_data, status=status.HTTP_200_OK)
         posts = Post.objects.all().order_by('-created_at')
-        
+
         if author:
             posts = posts.filter(author__username__icontains=author)
-        
+
         # Apply pagination
         paginator = PageNumberPagination()
         paginator.page_size = 10  # Set number of posts per page
@@ -87,7 +91,8 @@ class PostListCreateView(APIView):
 
         # Serialize the posts
         serializer = PostSerializer(page, many=True)
-        
+        cache.set(cache_key, serializer.data, timeout=300)
+
         # Return the paginated response
         return paginator.get_paginated_response(serializer.data)
 
@@ -95,6 +100,9 @@ class PostListCreateView(APIView):
         serializer = PostSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(author=request.user)
+            # Clear cache for the post list
+            cache_key = 'post_list_all'
+            cache.delete(cache_key)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
